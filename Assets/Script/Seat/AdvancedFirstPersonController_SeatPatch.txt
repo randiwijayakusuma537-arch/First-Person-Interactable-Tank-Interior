@@ -1,0 +1,117 @@
+=====================================================================
+ PATCH FOR AdvancedFirstPersonController.cs  (needed by PlayerSeat)
+ 3 small edits. Nothing existing is removed or changed in behaviour
+ unless SetMotionLocked(true) is called.
+=====================================================================
+
+WHY: the controller always runs gravity + cc.Move, and lean only works while
+grounded. A "motion lock" mode freezes all movement but keeps mouse look,
+crouch / stand, lean, zoom and every camera effect running.
+
+---------------------------------------------------------------------
+EDIT 1 of 3  -  add this block right after the ForceStopSlide() method
+               (in the PUBLIC API section):
+---------------------------------------------------------------------
+
+    // ---------------------------------------------------------------- Motion lock (used by PlayerSeat)
+
+    bool motionLocked;
+    Transform lockedIgnoreRoot;
+
+    public bool IsMotionLocked => motionLocked;
+
+    /// <summary>
+    /// Freezes ALL movement (gravity, walking, jumping, sliding, mantling, platforms) but keeps
+    /// mouse look, crouch/stand, lean, zoom and every camera effect running.
+    /// ignoreRoot: colliders under this transform are ignored by the stand-up headroom check.
+    /// </summary>
+    public void SetMotionLocked(bool locked, Transform ignoreRoot = null)
+    {
+        lockedIgnoreRoot = locked ? ignoreRoot : null;
+
+        if (motionLocked == locked)
+            return;
+
+        motionLocked = locked;
+
+        if (locked)
+        {
+            if (isSliding) EndSlide();
+            isMantling = false;
+            sprintToggled = false;
+            SetSprinting(false);
+
+            horizontalVelocity = Vector3.zero;
+            externalVelocity = Vector3.zero;
+            verticalVelocity = 0f;
+            actualHorizontalSpeed = 0f;
+            platform = null;
+            isOnSteepSlope = false;
+            grounded = true;      // lets lean work
+            cc.enabled = false;   // so the capsule can't collide with the vehicle it sits in
+        }
+        else
+        {
+            cc.enabled = true;
+            grounded = false;     // re-detected next frame
+            verticalVelocity = 0f;
+        }
+    }
+
+    bool IsIgnoredWhileLocked(Collider c)
+    {
+        return motionLocked && lockedIgnoreRoot != null && c.transform.IsChildOf(lockedIgnoreRoot);
+    }
+
+    void UpdateLocked(float dt)
+    {
+        moveInput = Vector2.zero;
+        hasMoveInput = false;
+        jumpPressed = false;
+        jumpHeld = false;
+        isSlowWalking = false;
+
+        UpdateZoom(dt);
+        HandleStanceInput();
+        UpdateStance(dt);
+        UpdateStamina(dt);
+    }
+
+---------------------------------------------------------------------
+EDIT 2 of 3  -  in Update(), right after  HandleLook(dt);  add:
+---------------------------------------------------------------------
+
+        if (motionLocked)
+        {
+            UpdateLocked(dt);
+            return;
+        }
+
+So that part of Update() looks like:
+
+        HandleCursor();
+        HandleLook(dt);
+
+        if (motionLocked)
+        {
+            UpdateLocked(dt);
+            return;
+        }
+
+        UpdateGround(dt);
+        ...
+
+---------------------------------------------------------------------
+EDIT 3 of 3  -  FIND AND REPLACE ALL (it appears twice: in HasHeadroom
+               and in CapsuleFree):
+---------------------------------------------------------------------
+
+FIND:
+            if (c == cc || c.transform.IsChildOf(transform)) continue;
+
+REPLACE WITH:
+            if (c == cc || c.transform.IsChildOf(transform) || IsIgnoredWhileLocked(c)) continue;
+
+=====================================================================
+ Done. Everything else in the controller stays exactly the same.
+=====================================================================
